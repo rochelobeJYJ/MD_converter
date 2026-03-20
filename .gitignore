@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Build and Release
+build/
+dist/
+*.spec
+*.zip
+
+# Virtual Environments
+.venv/
+venv/
+env/
+pdf2md_build_env/
+
+# Ide & OS
+.vscode/
+.idea/
+*.lnk
+Thumbs.db
