@@ -1,3 +1,4 @@
 opendataloader-pdf
 tkinterdnd2
 pillow
+markitdown[all]

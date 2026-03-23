@@ -25,11 +25,13 @@ if os.name == 'nt':
     subprocess.Popen = _Popen
 
 # ── Java 환경 설정 ──────────────────────────────────────────────────
-JAVA_HOME = r"C:\Program Files\Eclipse Adoptium\jdk-17.0.18.8-hotspot"
-JAVA_BIN = os.path.join(JAVA_HOME, "bin")
-if JAVA_BIN not in os.environ.get("PATH", ""):
-    os.environ["PATH"] = JAVA_BIN + os.pathsep + os.environ.get("PATH", "")
-os.environ["JAVA_HOME"] = JAVA_HOME
+# (패키징 후 다른 PC에서 실행시 오류 방지: 존재할 때만 적용)
+JAVA_HOME_CANDIDATE = r"C:\Program Files\Eclipse Adoptium\jdk-17.0.18.8-hotspot"
+if os.path.exists(JAVA_HOME_CANDIDATE):
+    JAVA_BIN = os.path.join(JAVA_HOME_CANDIDATE, "bin")
+    if JAVA_BIN not in os.environ.get("PATH", ""):
+        os.environ["PATH"] = JAVA_BIN + os.pathsep + os.environ.get("PATH", "")
+    os.environ["JAVA_HOME"] = JAVA_HOME_CANDIDATE
 
 # ── tkinterdnd2 임포트 ──────────────────────────────────────────────
 try:
@@ -40,6 +42,13 @@ except ImportError:
 
 import opendataloader_pdf
 
+try:
+    from markitdown import MarkItDown
+    MARKITDOWN_AVAILABLE = True
+except ImportError:
+    MARKITDOWN_AVAILABLE = False
+
+MARKITDOWN_EXTS = ('.pdf', '.pptx', '.docx', '.xlsx', '.jpg', '.jpeg', '.png', '.mp3', '.wav', '.html', '.htm', '.csv', '.json', '.xml', '.zip', '.txt')
 
 # ═══════════════════════════════════════════════════════════════════
 #  색상 팔레트 & 스타일 상수 (그레이톤)
@@ -84,15 +93,19 @@ class Theme:
 # ═══════════════════════════════════════════════════════════════════
 class PDFtoMDApp:
     def __init__(self):
+        # ── 언어 설정용 변수는 아직 tk 생성이 안되어 뒤에서 초기화, 먼저 T 헬퍼 준비 ──
+        
         # ── 루트 윈도우 설정 ────────────────────────────────
         if DND_AVAILABLE:
             self.root = TkinterDnD.Tk()
         else:
             self.root = tk.Tk()
 
-        self.root.title("PDF → Markdown 변환기")
-        self.root.geometry("680x620")
-        self.root.minsize(650, 580)
+        self.lang_var = tk.StringVar(value="KOR")
+        
+        self.root.title(self.T("각종 문서 → Markdown 변환기", "Universal Document → Markdown Converter"))
+        self.root.geometry("680x680")
+        self.root.minsize(650, 640)
         self.root.configure(bg=Theme.BG_DARK)
 
         # 아이콘 설정
@@ -104,10 +117,12 @@ class PDFtoMDApp:
             print(f"아이콘 로드 실패: {e}")
 
         # ── 상태 변수 ──────────────────────────────────────
-        self.pdf_files: list[str] = []
+        self.input_files: list[str] = []
         self.custom_output_dir: str | None = None
         self.is_converting = False
         self.conversion_just_finished = False
+
+        self.engine_var = tk.StringVar(value="opendataloader")
 
         # ── ttk 스타일 ─────────────────────────────────────
         self._setup_styles()
@@ -141,6 +156,9 @@ class PDFtoMDApp:
             thickness=22,
         )
 
+    def T(self, ko_text: str, en_text: str) -> str:
+        return ko_text if getattr(self, 'lang_var', None) and self.lang_var.get() == "KOR" else en_text
+
     # ─────────────────────────────────────────────────────────
     #  UI 빌드
     # ─────────────────────────────────────────────────────────
@@ -153,13 +171,32 @@ class PDFtoMDApp:
         title_frame = tk.Frame(main, bg=Theme.BG_DARK)
         title_frame.pack(fill="x", pady=(0, 8))
 
-        tk.Label(
+        self.title_label = tk.Label(
             title_frame,
-            text="📄  PDF → Markdown 변환기",
+            text=self.T("📄 각종 문서 → Markdown 변환기", "📄  Universal Doc → MD Converter"),
             font=Theme.FONT_TITLE,
             fg=Theme.TEXT_PRIMARY,
             bg=Theme.BG_DARK,
-        ).pack(side="left")
+        )
+        self.title_label.pack(side="left")
+
+        # ── 엔진 선택 (우측 상단 라디오 버튼 수직 배치) ──
+        engine_frame = tk.Frame(title_frame, bg=Theme.BG_DARK)
+        engine_frame.pack(side="right", pady=2)
+        
+        self.rb_engine_1 = tk.Radiobutton(
+            engine_frame, text=self.T("OpenDataLoader (PDF만)", "OpenDataLoader (PDF only)"), variable=self.engine_var, value="opendataloader",
+            bg=Theme.BG_DARK, fg=Theme.TEXT_PRIMARY, activebackground=Theme.BG_DARK, activeforeground=Theme.TEXT_PRIMARY,
+            selectcolor=Theme.BG_INPUT, cursor="hand2", font=Theme.FONT_SMALL, command=self._on_engine_change
+        )
+        self.rb_engine_1.pack(anchor="w", padx=4, pady=1)
+        
+        self.rb_engine_2 = tk.Radiobutton(
+            engine_frame, text=self.T("MarkItDown (다양한 포맷)", "MarkItDown (Various formats)"), variable=self.engine_var, value="markitdown",
+            bg=Theme.BG_DARK, fg=Theme.TEXT_PRIMARY, activebackground=Theme.BG_DARK, activeforeground=Theme.TEXT_PRIMARY,
+            selectcolor=Theme.BG_INPUT, cursor="hand2", font=Theme.FONT_SMALL, command=self._on_engine_change
+        )
+        self.rb_engine_2.pack(anchor="w", padx=4, pady=1)
 
         # ═══════════════════════════════════════════════════
         #  섹션 1: 파일 입력
@@ -171,17 +208,18 @@ class PDFtoMDApp:
         header = tk.Frame(file_card, bg=Theme.BG_CARD)
         header.pack(fill="x", padx=12, pady=(10, 4))
 
-        tk.Label(
+        self.lbl_file_list_title = tk.Label(
             header,
-            text="📁  PDF 파일 목록",
+            text=self.T("📁  변환할 파일 목록", "📁  Files to Convert"),
             font=("맑은 고딕", 11, "bold"),
             fg=Theme.TEXT_PRIMARY,
             bg=Theme.BG_CARD,
-        ).pack(side="left")
+        )
+        self.lbl_file_list_title.pack(side="left")
 
         self.file_count_label = tk.Label(
             header,
-            text="0개 파일",
+            text=self.T("0개 파일", "0 Files"),
             font=Theme.FONT_SMALL,
             fg=Theme.TEXT_MUTED,
             bg=Theme.BG_CARD,
@@ -227,9 +265,12 @@ class PDFtoMDApp:
         btn_row = tk.Frame(file_card, bg=Theme.BG_CARD)
         btn_row.pack(fill="x", padx=12, pady=(0, 10))
 
-        self._make_button(btn_row, "📂 파일 찾기", self._browse_files).pack(side="left", padx=(0, 6))
-        self._make_button(btn_row, "🗑️ 선택 삭제", self._remove_selected, style="secondary").pack(side="left", padx=(0, 6))
-        self._make_button(btn_row, "🧹 전체 삭제", self._clear_files, style="secondary").pack(side="left")
+        self.btn_browse = self._make_button(btn_row, self.T("📂 파일 찾기", "📂 Browse Files"), self._browse_files)
+        self.btn_browse.pack(side="left", padx=(0, 6))
+        self.btn_remove = self._make_button(btn_row, self.T("🗑️ 선택 삭제", "🗑️ Remove Selected"), self._remove_selected, style="secondary")
+        self.btn_remove.pack(side="left", padx=(0, 6))
+        self.btn_clear = self._make_button(btn_row, self.T("🧹 전체 삭제", "🧹 Clear All"), self._clear_files, style="secondary")
+        self.btn_clear.pack(side="left")
 
         # ═══════════════════════════════════════════════════
         #  섹션 2: 저장 경로 설정
@@ -240,18 +281,19 @@ class PDFtoMDApp:
         save_inner = tk.Frame(save_card, bg=Theme.BG_CARD)
         save_inner.pack(fill="x", padx=12, pady=10)
 
-        tk.Label(
+        self.lbl_save_path = tk.Label(
             save_inner,
-            text="💾  저장 경로",
+            text=self.T("💾  저장 경로", "💾  Save Path"),
             font=("맑은 고딕", 11, "bold"),
             fg=Theme.TEXT_PRIMARY,
             bg=Theme.BG_CARD,
-        ).pack(anchor="w")
+        )
+        self.lbl_save_path.pack(anchor="w")
 
         path_row = tk.Frame(save_inner, bg=Theme.BG_CARD)
         path_row.pack(fill="x", pady=(8, 0))
 
-        self.save_path_var = tk.StringVar(value="원본 PDF와 같은 폴더에 저장 (기본)")
+        self.save_path_var = tk.StringVar(value=self.T("원본 PDF와 같은 폴더에 저장 (기본)", "Save to original file directory (Default)"))
         self.save_path_entry = tk.Entry(
             path_row,
             textvariable=self.save_path_var,
@@ -268,14 +310,16 @@ class PDFtoMDApp:
         )
         self.save_path_entry.pack(side="left", fill="x", expand=True, ipady=5, padx=(0, 6))
 
-        self._make_button(path_row, "📁 폴더 변경", self._browse_output_dir).pack(side="left", padx=(0, 4))
-        self._make_button(path_row, "↩️ 기본값", self._reset_output_dir, style="secondary").pack(side="left")
+        self.btn_folder_change = self._make_button(path_row, self.T("📁 폴더 변경", "📁 Change Folder"), self._browse_output_dir)
+        self.btn_folder_change.pack(side="left", padx=(0, 4))
+        self.btn_folder_reset = self._make_button(path_row, self.T("↩️ 기본값", "↩️ Reset Default"), self._reset_output_dir, style="secondary")
+        self.btn_folder_reset.pack(side="left")
 
         # 폴더 자동 열기 옵션
         self.auto_open_var = tk.BooleanVar(value=True)
-        opt_check = tk.Checkbutton(
+        self.chk_auto_open = tk.Checkbutton(
             save_inner,
-            text="변환 완료 후 저장 폴더 열기",
+            text=self.T("변환 완료 후 저장 폴더 열기", "Open specific save folder after conversion"),
             variable=self.auto_open_var,
             bg=Theme.BG_CARD,
             fg=Theme.TEXT_SECONDARY,
@@ -287,7 +331,7 @@ class PDFtoMDApp:
             bd=0,
             relief="flat",
         )
-        opt_check.pack(anchor="w", pady=(8, 0))
+        self.chk_auto_open.pack(anchor="w", pady=(8, 0))
 
         # ═══════════════════════════════════════════════════
         #  섹션 3: 로그 & 진행 상황
@@ -298,13 +342,14 @@ class PDFtoMDApp:
         log_inner = tk.Frame(log_card, bg=Theme.BG_CARD)
         log_inner.pack(fill="x", padx=12, pady=10)
 
-        tk.Label(
+        self.lbl_log_title = tk.Label(
             log_inner,
-            text="📋  변환 로그",
+            text=self.T("📋  변환 로그", "📋  Conversion Log"),
             font=("맑은 고딕", 11, "bold"),
             fg=Theme.TEXT_PRIMARY,
             bg=Theme.BG_CARD,
-        ).pack(anchor="w")
+        )
+        self.lbl_log_title.pack(anchor="w")
 
         log_frame = tk.Frame(log_inner, bg=Theme.BG_INPUT, bd=0, highlightthickness=1,
                              highlightbackground=Theme.BORDER, highlightcolor=Theme.BORDER_ACTIVE)
@@ -342,7 +387,7 @@ class PDFtoMDApp:
 
         self.progress_label = tk.Label(
             progress_frame,
-            text="대기 중",
+            text=self.T("대기 중", "Waiting"),
             font=Theme.FONT_SMALL,
             fg=Theme.TEXT_MUTED,
             bg=Theme.BG_CARD,
@@ -364,10 +409,24 @@ class PDFtoMDApp:
         bottom = tk.Frame(main, bg=Theme.BG_DARK)
         bottom.pack(fill="x")
 
+        # ── 언어 선택 ──
+        lang_frame = tk.Frame(bottom, bg=Theme.BG_DARK)
+        lang_frame.pack(side="left", anchor="w")
+        
+        tk.Radiobutton(lang_frame, text="KOR", variable=self.lang_var, value="KOR",
+                       bg=Theme.BG_DARK, fg=Theme.TEXT_PRIMARY, activebackground=Theme.BG_DARK, activeforeground=Theme.TEXT_PRIMARY,
+                       selectcolor=Theme.BG_INPUT, cursor="hand2", font=Theme.FONT_SMALL, command=self._update_language
+        ).pack(side="left")
+        
+        tk.Radiobutton(lang_frame, text="ENG", variable=self.lang_var, value="ENG",
+                       bg=Theme.BG_DARK, fg=Theme.TEXT_PRIMARY, activebackground=Theme.BG_DARK, activeforeground=Theme.TEXT_PRIMARY,
+                       selectcolor=Theme.BG_INPUT, cursor="hand2", font=Theme.FONT_SMALL, command=self._update_language
+        ).pack(side="left")
+
         # 변환 시작 버튼
         self.convert_btn = tk.Button(
             bottom,
-            text="🚀  변환 시작",
+            text=self.T("🚀  변환 시작", "🚀  Start Conversion"),
             font=("맑은 고딕", 11, "bold"),
             fg=Theme.TEXT_ON_ACCENT,
             bg=Theme.ACCENT,
@@ -423,11 +482,38 @@ class PDFtoMDApp:
         btn.bind("<Leave>", lambda e, b=btn, o=bg: b.config(bg=o))
         return btn
 
+    def _update_language(self):
+        """언어 변경 시 UI 텍스트 일괄 갱신"""
+        self.root.title(self.T("각종 문서 → Markdown 변환기", "Universal Document → Markdown Converter"))
+        self.title_label.config(text=self.T("📄  각종 문서 → Markdown 변환기", "📄  Universal Doc → MD Converter"))
+        self.rb_engine_1.config(text=self.T("OpenDataLoader (PDF만)", "OpenDataLoader (PDF only)"))
+        self.rb_engine_2.config(text=self.T("MarkItDown (다양한 포맷)", "MarkItDown (Various formats)"))
+        self.lbl_file_list_title.config(text=self.T("📁  변환할 파일 목록", "📁  Files to Convert"))
+        self._refresh_file_list() # updating file count label
+        self.btn_browse.config(text=self.T("📂 파일 찾기", "📂 Browse Files"))
+        self.btn_remove.config(text=self.T("🗑️ 선택 삭제", "🗑️ Remove Selected"))
+        self.btn_clear.config(text=self.T("🧹 전체 삭제", "🧹 Clear All"))
+        self.lbl_save_path.config(text=self.T("💾  저장 경로", "💾  Save Path"))
+        if self.custom_output_dir is None:
+            self.save_path_var.set(self.T("원본 PDF와 같은 폴더에 저장 (기본)", "Save to original file directory (Default)"))
+        self.btn_folder_change.config(text=self.T("📁 폴더 변경", "📁 Change Folder"))
+        self.btn_folder_reset.config(text=self.T("↩️ 기본값", "↩️ Reset Default"))
+        self.chk_auto_open.config(text=self.T("변환 완료 후 저장 폴더 열기", "Open specific save folder after conversion"))
+        self.lbl_log_title.config(text=self.T("📋  변환 로그", "📋  Conversion Log"))
+        if not self.is_converting and not self.conversion_just_finished:
+            self.progress_label.config(text=self.T("대기 중", "Waiting"))
+        elif self.conversion_just_finished:
+            self.progress_label.config(text=self.T("완료 ✨", "Completed ✨"))
+        if not self.is_converting:
+            self.convert_btn.config(text=self.T("🚀  변환 시작", "🚀  Start Conversion"))
+        else:
+            self.convert_btn.config(text=self.T("⏳  변환 중...", "⏳  Converting..."))
+
     def _show_drop_hint(self):
         """리스트가 비어있을 때 드래그 앤 드롭 안내를 표시합니다."""
-        if len(self.pdf_files) == 0:
-            hint = "여기에 PDF 파일을 끌어다 놓거나\n'파일 찾기' 버튼을 눌러 추가하세요" if DND_AVAILABLE \
-                else "'파일 찾기' 버튼을 눌러 PDF 파일을 추가하세요"
+        if len(self.input_files) == 0:
+            hint = self.T("여기에 파일을 끌어다 놓거나\n'파일 찾기' 버튼을 눌러 추가하세요", "Drag and drop files here or\nclick 'Browse Files' button to add") if DND_AVAILABLE \
+                else self.T("'파일 찾기' 버튼을 눌러 파일을 추가하세요", "Click 'Browse Files' button to add files")
             self.file_listbox.config(fg=Theme.TEXT_MUTED, justify="center")
             self.file_listbox.insert("end", "")
             self.file_listbox.insert("end", hint)
@@ -439,35 +525,54 @@ class PDFtoMDApp:
         """파일 리스트를 갱신합니다."""
         self.file_listbox.config(state="normal", fg=Theme.TEXT_PRIMARY, justify="left")
         self.file_listbox.delete(0, "end")
-        if not self.pdf_files:
+        if not self.input_files:
             self._show_drop_hint()
         else:
-            for f in self.pdf_files:
+            for f in self.input_files:
                 display = f"  📄  {os.path.basename(f)}    [{os.path.dirname(f)}]"
                 self.file_listbox.insert("end", display)
-        self.file_count_label.config(text=f"{len(self.pdf_files)}개 파일")
+        self.file_count_label.config(text=f"{len(self.input_files)}{self.T('개 파일', ' Files')}")
 
-    # ─────────────────────────────────────────────────────────
-    #  이벤트 핸들러
-    # ─────────────────────────────────────────────────────────
+    def _on_engine_change(self):
+        """엔진을 변경했을 때 호출됩니다."""
+        if self.engine_var.get() == "opendataloader":
+            filtered = [f for f in self.input_files if f.lower().endswith(".pdf")]
+            if len(filtered) < len(self.input_files):
+                self.input_files = filtered
+                self._refresh_file_list()
+                self._log("⚠️ PDF 전용 엔진으로 설정되어, PDF 외의 파일들이 목록에서 제거되었습니다.", "warning")
+
     def _on_drop(self, event):
         """드래그 앤 드롭으로 파일 추가."""
         if self.conversion_just_finished:
-            self.pdf_files.clear()
+            self.input_files.clear()
             self.conversion_just_finished = False
 
         raw = event.data
         # tkinterdnd2 는 {} 나 공백으로 구분된 경로를 반환
         files = self._parse_dnd_data(raw)
         added = 0
+        skipped = 0
         for f in files:
             f = f.strip().strip('"').strip("'")
-            if f.lower().endswith(".pdf") and os.path.isfile(f) and f not in self.pdf_files:
-                self.pdf_files.append(f)
+            ext = os.path.splitext(f)[1].lower()
+            if os.path.isfile(f) and f not in self.input_files:
+                if self.engine_var.get() == "opendataloader" and ext != ".pdf":
+                    skipped += 1
+                    continue
+                if self.engine_var.get() == "markitdown" and ext not in MARKITDOWN_EXTS:
+                    skipped += 1
+                    continue
+                self.input_files.append(f)
                 added += 1
         if added > 0:
             self._refresh_file_list()
-            self._log(f"✅ {added}개 파일이 추가되었습니다.", "success")
+            self._log(self.T(f"✅ {added}개 파일이 추가되었습니다.", f"✅ {added} files added."), "success")
+        if skipped > 0:
+            if self.engine_var.get() == "opendataloader":
+                self.root.after(0, messagebox.showwarning, self.T("⚠️ 알림", "⚠️ Warning"), self.T("OpenDataLoader 엔진은 PDF 파일만 지원합니다.\nPDF 이외의 파일은 제외되었습니다.", "OpenDataLoader engine only supports PDF files.\nNon-PDF files have been excluded."))
+            else:
+                self.root.after(0, messagebox.showwarning, self.T("⚠️ 알림", "⚠️ Warning"), self.T("해당 엔진에서 지원하지 않는 파일 포맷이 제외되었습니다.", "Unsupported file formats for this engine were excluded."))
 
     @staticmethod
     def _parse_dnd_data(data: str) -> list[str]:
@@ -491,23 +596,41 @@ class PDFtoMDApp:
         return files
 
     def _browse_files(self):
-        """파일 탐색기를 열어 PDF 파일을 선택합니다."""
+        """파일 탐색기를 열어 파일을 선택합니다."""
         if self.conversion_just_finished:
-            self.pdf_files.clear()
+            self.input_files.clear()
             self.conversion_just_finished = False
 
+        if self.engine_var.get() == "opendataloader":
+            ftypes = [("PDF 파일", "*.pdf"), ("모든 파일", "*.*")]
+        else:
+            ftypes = [("지원 파일", "*.pdf;*.pptx;*.docx;*.xlsx;*.jpg;*.jpeg;*.png;*.mp3;*.wav;*.html;*.htm;*.csv;*.json;*.xml;*.zip;*.txt"), ("모든 파일", "*.*")]
+
         filepaths = filedialog.askopenfilenames(
-            title="PDF 파일 선택",
-            filetypes=[("PDF 파일", "*.pdf"), ("모든 파일", "*.*")],
+            title="파일 선택",
+            filetypes=ftypes,
         )
         added = 0
+        skipped = 0
         for f in filepaths:
-            if f not in self.pdf_files:
-                self.pdf_files.append(f)
+            ext = os.path.splitext(f)[1].lower()
+            if f not in self.input_files:
+                if self.engine_var.get() == "opendataloader" and ext != ".pdf":
+                    skipped += 1
+                    continue
+                if self.engine_var.get() == "markitdown" and ext not in MARKITDOWN_EXTS:
+                    skipped += 1
+                    continue
+                self.input_files.append(f)
                 added += 1
         if added > 0:
             self._refresh_file_list()
             self._log(f"✅ {added}개 파일이 추가되었습니다.", "success")
+        if skipped > 0:
+            if self.engine_var.get() == "opendataloader":
+                self.root.after(0, messagebox.showwarning, "⚠️ 알림", "OpenDataLoader 엔진은 PDF 파일만 지원합니다.\nPDF 이외의 파일은 제외되었습니다.")
+            else:
+                self.root.after(0, messagebox.showwarning, "⚠️ 알림", "해당 엔진에서 지원하지 않는 파일 포맷이 제외되었습니다.")
 
     def _remove_selected(self):
         """선택된 파일을 목록에서 제거합니다."""
@@ -516,15 +639,15 @@ class PDFtoMDApp:
         if not selection:
             return
         for idx in reversed(selection):
-            if 0 <= idx < len(self.pdf_files):
-                self.pdf_files.pop(idx)
+            if 0 <= idx < len(self.input_files):
+                self.input_files.pop(idx)
         self._refresh_file_list()
         self._log("🗑️ 선택된 파일이 삭제되었습니다.", "info")
 
     def _clear_files(self):
         """모든 파일을 목록에서 제거합니다."""
         self.conversion_just_finished = False
-        self.pdf_files.clear()
+        self.input_files.clear()
         self._refresh_file_list()
         self._log("🧹 파일 목록이 초기화되었습니다.", "info")
 
@@ -562,13 +685,14 @@ class PDFtoMDApp:
             messagebox.showwarning("⚠️ 알림", "이미 변환 작업이 진행 중입니다.")
             return
 
-        if not self.pdf_files:
-            messagebox.showwarning("⚠️ 알림", "변환할 PDF 파일을 먼저 추가해주세요.")
+        if not self.input_files:
+            messagebox.showwarning("⚠️ 알림", "변환할 파일을 먼저 추가해주세요.")
             return
 
         self.is_converting = True
         self.convert_btn.config(text="⏳  변환 중...", bg=Theme.TEXT_MUTED, state="disabled")
         self.progress_var.set(0)
+        self.progress_label.config(text="대기 중", fg=Theme.TEXT_MUTED)
         self._log("🚀 변환 작업을 시작합니다...", "accent")
 
         # 백그라운드 스레드에서 실행
@@ -576,8 +700,60 @@ class PDFtoMDApp:
         thread.start()
 
     def _conversion_worker(self):
-        """백그라운드 스레드에서 PDF→MD 변환을 수행합니다."""
-        total = len(self.pdf_files)
+        """백그라운드 스레드에서 형 변환을 수행합니다."""
+        total = len(self.input_files)
+        success_count = 0
+        fail_count = 0
+
+        engine = self.engine_var.get()
+        if engine == "markitdown":
+            self._run_markitdown_conversion(total)
+        else:
+            self._run_opendataloader_conversion(total)
+
+    def _run_markitdown_conversion(self, total):
+        """MarkItDown 라이브러리를 사용한 변환 로직"""
+        try:
+            from markitdown import MarkItDown
+            md = MarkItDown()
+        except Exception as e:
+            import traceback
+            err_msg = traceback.format_exc()
+            self.root.after(0, self._log, f"❌ MarkItDown 로드 실패: {e}", "error")
+            print(err_msg)  # 콘솔에도 출력
+            self.root.after(0, self._conversion_done)
+            return
+
+        success_count = 0
+        fail_count = 0
+        processed = 0
+
+        for f in self.input_files:
+            name = os.path.basename(f)
+            out_dir = self.custom_output_dir if self.custom_output_dir else os.path.dirname(f)
+            out_name = os.path.splitext(name)[0] + ".md"
+            out_path = os.path.join(out_dir, out_name)
+
+            self.root.after(0, self._log, f"🔄 {name} — MarkItDown 변환 시작...", "info")
+            try:
+                # convert 메서드 실행
+                result = md.convert(f)
+                with open(out_path, "w", encoding="utf-8") as out_f:
+                    out_f.write(result.text_content)
+                success_count += 1
+                self.root.after(0, self._log, f"  ✅ {name} — 변환 완료", "success")
+            except Exception as e:
+                fail_count += 1
+                self.root.after(0, self._log, f"  ❌ {name} — 변환 실패: {e}", "error")
+
+            processed += 1
+            pct = (processed / total) * 100
+            self.root.after(0, self._update_progress, pct, f"{processed}/{total} 완료")
+
+        self._finish_conversion(success_count, fail_count)
+
+    def _run_opendataloader_conversion(self, total):
+        """OpenDataLoader 라이브러리를 사용한 기존 변환 로직"""
         success_count = 0
         fail_count = 0
 
@@ -586,7 +762,7 @@ class PDFtoMDApp:
             self.root.after(0, self._log, f"📦 일괄 변환 모드 ({total}개 파일 → {self.custom_output_dir})", "info")
             try:
                 opendataloader_pdf.convert(
-                    input_path=list(self.pdf_files),
+                    input_path=list(self.input_files),
                     output_dir=self.custom_output_dir,
                     format="markdown",
                     image_output="external",
@@ -595,7 +771,7 @@ class PDFtoMDApp:
                 )
                 success_count = total
                 for i in range(total):
-                    name = os.path.basename(self.pdf_files[i])
+                    name = os.path.basename(self.input_files[i])
                     self.root.after(0, self._log, f"  ✅ {name} — 변환 완료", "success")
                     pct = ((i + 1) / total) * 100
                     self.root.after(0, self._update_progress, pct, f"{i + 1}/{total} 완료")
@@ -605,7 +781,7 @@ class PDFtoMDApp:
         else:
             # ── 원본 위치 저장: 폴더별 그룹화 후 배치 처리 ──
             groups: dict[str, list[str]] = defaultdict(list)
-            for f in self.pdf_files:
+            for f in self.input_files:
                 groups[os.path.dirname(f)].append(f)
 
             processed = 0
@@ -635,9 +811,10 @@ class PDFtoMDApp:
                         processed += 1
                         pct = (processed / total) * 100
                         self.root.after(0, self._update_progress, pct, f"{processed}/{total} 완료")
-                    fail_count += len(files)
+        self._finish_conversion(success_count, fail_count)
 
-        # ── 완료 ──
+    def _finish_conversion(self, success_count, fail_count):
+        """변환 작업 마무리 및 결과 요약"""
         summary = f"🏁 변환 완료! 성공: {success_count}개"
         if fail_count > 0:
             summary += f", 실패: {fail_count}개"
@@ -647,8 +824,8 @@ class PDFtoMDApp:
         if self.auto_open_var.get() and success_count > 0:
             if self.custom_output_dir and os.path.exists(self.custom_output_dir):
                 self.root.after(0, os.startfile, self.custom_output_dir)
-            elif len(self.pdf_files) > 0:
-                last_out_dir = os.path.dirname(self.pdf_files[-1])
+            elif len(self.input_files) > 0:
+                last_out_dir = os.path.dirname(self.input_files[-1])
                 if os.path.exists(last_out_dir):
                     self.root.after(0, os.startfile, last_out_dir)
 

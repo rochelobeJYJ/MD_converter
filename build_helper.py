@@ -3,7 +3,7 @@ import sys
 import shutil
 import subprocess
 
-APP_NAME = "PDF_to_Markdown"
+APP_NAME = "Markdown_Converter"
 MAIN_SCRIPT = "app.py"
 ICON_FILE = "icon.ico"
 
@@ -33,14 +33,7 @@ def get_conda_components():
             if (f.startswith("libcrypto") or f.startswith("libssl")) and f.endswith(".dll"):
                 binaries.append(f"{os.path.join(bin_dir, f)};.")
 
-    # 2. PyInstaller 내장 훅을 이용해 핵심 라이브러리 내부 파일 완벽 수집 (중요)
-    # opendataloader-pdf 내부의 java(.jar) 파일 및 모델 누락 방지
-    for src, dest in collect_data_files('opendataloader_pdf'):
-        datas.append(f"{src};{dest}")
-    # tkinterdnd2 내부의 tcl 라이브러리/dll 폴더 누락 방지
-    for src, dest in collect_data_files('tkinterdnd2'):
-        datas.append(f"{src};{dest}")
-
+    # 2. PyInstaller 내장 훅 대신 CLI 전달 플래그 활용 (명령어 길이 한계 방지)
     # 3. 아이콘 파일 추가
     if os.path.exists(ICON_FILE):
         datas.append(f"{ICON_FILE};.")
@@ -65,22 +58,40 @@ def build_exe():
         pyinstaller_args.extend(["--icon", ICON_FILE])
         
     for b in binaries:
-        pyinstaller_args.extend(["--add-binary", b])
+        pyinstaller_args.extend(["--add-binary", f"{b}"])
         
     for d in datas:
-        pyinstaller_args.extend(["--add-data", d])
+        pyinstaller_args.extend(["--add-data", f"{d}"])
         
-    # 명시적 의존성 추가 (동적 import 오류 방지)
+    # 명시적 의존성 및 데이터 수집 추가 (WinError 206 방지용 네이티브 플래그)
     hidden_imports = [
         "tkinter", 
         "tkinterdnd2", 
         "opendataloader_pdf", 
         "PIL",
-        "subprocess"
+        "subprocess",
+        "markitdown",
+        "magika",
+        "onnxruntime",
+        "mammoth",
+        "pdfminer"
     ]
     for hi in hidden_imports:
         pyinstaller_args.extend(["--hidden-import", hi])
         
+    collect_all_pkgs = [
+        'opendataloader_pdf',
+        'tkinterdnd2',
+        'markitdown',
+        'magika',
+        'onnxruntime',
+        'mammoth',
+        'pdfminer',
+        'speech_recognition',
+    ]
+    for pkg in collect_all_pkgs:
+        pyinstaller_args.extend(["--collect-all", pkg])
+
     pyinstaller_args.append(MAIN_SCRIPT)
     
     print(">>> Running PyInstaller with args sequence...")
