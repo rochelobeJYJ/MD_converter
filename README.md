@@ -14,9 +14,9 @@
 * **스마트 목록 관리**: 여러 작업을 반복할 때 편리하도록, 변환이 완료된 후 새로운 파일을 드래그 앤 드롭 하면 기존 목록을 자동으로 비워줍니다.
 * **저장 폴더 자동 열기**: 모든 변환이 무사히 끝나면 변환 결과물이 저장된 폴더를 윈도우 탐색기로 즉시 띄워주는 편의 기능을 내장했습니다.
 
-<img width="550" height="583" alt="image" src="https://github.com/user-attachments/assets/fa3bea04-b120-40a0-ae5a-f4f4386453dd" />
+<img width="530" height="583" alt="image" src="https://github.com/user-attachments/assets/fa3bea04-b120-40a0-ae5a-f4f4386453dd" />
 
-<img width="550" height="583" alt="image" src="https://github.com/user-attachments/assets/ec799762-9c25-481c-9a81-9ca831c59ee4" />
+<img width="530" height="583" alt="image" src="https://github.com/user-attachments/assets/ec799762-9c25-481c-9a81-9ca831c59ee4" />
 
 
 
